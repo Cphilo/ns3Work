@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NS3 Simulator</title>
+    <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+</head>
+<body>
+<div id="container"></div>
+<div id="application">
+    <form>
+        应用:
+        <select name="app_type">
+            <option value="0">UdpEcho</option>
+            <option value="1">TcpEcho</option>
+        </select>
+        发送节点:<select name="sender"></select>
+        接收节点:<select name="receiver"></select>
+        开始时间(s):<input type="text" name="start_time">
+        结束时间(s):<input type="text" name="end_time">
+        端口号:<input type="text" name="port">
+        <input type="button" value="添加" name="add_app">
+        <div id="app_list">
+        </div>
+    </form>
+    <br>
+</div>
+<div>
+    <input type="button" value="导出XML" name="export_xml">
+    <input type="button" value="导入XML" name="import_xml">
+    <input type="button" value="模拟实验结果" name="simulate">
+    <textarea cols="2" rows="14" style="width: 100%;">
+    </textarea>
+</div>
+<script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+<script type="text/javascript" src="/static/lib/kinetic.js"></script>
+<script defer="defer">
+var imageURLs=["pc", "tap", "ap_wifi", "station_wifi", "hub", "switch", "router","wired_link", "link", "p2p_link"];
+var TYPES = ["Pc", "Tap", "Ap", "Station", "Hub", "Bridge", "Router", "WiredLink", "WifiLink", "P2pLink"];
+var NAMEPREFIX = ["term_", "tap_", "ap_", "station_", "hub_", "bridge_", "router_"];
+var APPTYPES = ["UdpEcho", "TcpEcho"];
+var APPPREFIX = ["udpEcho_", "tcpEcho_"];
+var HARDWARETYPES = ["Tap", "Ap", "Hub", "Bridge", "PointToPoint"];
+var HARDWAREPREFIX = ["tap_", "ap_", "hub_", "bridge_", "p2p_"];
+var imagesOK=0;
+var imgs=[];
+loadAllImages(start);
+
+function loadAllImages(callback){
+    for (var i=0; i<imageURLs.length; i++) {
+        var img = new Image();
+        imgs.push(img);
+        img.onload = function(){
+            imagesOK++;
+            if (imagesOK>=imageURLs.length ) {
+                callback();
+            }
+        };
+        img.onerror=function(){alert("image load failed");}
+        img.src = "/static/img/" + imageURLs[i] + ".png";
+    }
+}
+function start() {
+    var WIDTH = 48;
+    var HEIGHT = 32;
+    var STARTPOINT = [300, 30];
+    var GAP = 20;
+    var components = [];
+    var isDrawLine = false;
+    var lastX, lastY;
+    var nodeDown, nodeUp;
+    var cloneComponets = [];
+    var lines = [];
+    var applications = [];
+    var lineType;
+    var stage = new Kinetic.Stage({
+        container: 'container',
+        width: window.innerWidth,
+        height: window.innerHeight * 0.6
+    });
+    var layer = new Kinetic.Layer();
+    for(var i = 0; i < imgs.length; i++) {
+        var component = new Kinetic.Image({
+            x: STARTPOINT[0] + (WIDTH + GAP) * i,
+            y: STARTPOINT[1],
+            image: imgs[i],
+            width: WIDTH,
+            height: HEIGHT,
+            draggable: false,
+            id: TYPES[i],
+            name: TYPES[i]
+        });
+        layer.add(component);
+        if(imageURLs[i] === "link" || imageURLs[i] == "wired_link" || imageURLs[i] === "p2p_link") {
+            component.on("mousedown", function() {
+                if(isDrawLine) {
+                    if(lineType === this.id()) {
+                        isDrawLine = false;
+                        this.fill("#ffffff");
+                        this.draw();
+                        for(var i=0;i<cloneComponets.length;i++) {
+                            cloneComponets[i].draggable(true);
+                        }
+                    } else {
+                        layer.find("#"+lineType).fill("#ffffff");
+                        this.fill("#669999");
+                        lineType = this.id();
+                        layer.draw();
+                    }
+                } else {
+                    isDrawLine = true;
+                    lineType = this.id();
+                    this.fill("#669999");
+                    this.draw();
+                    for(var i=0;i<cloneComponets.length;i++) {
+                        cloneComponets[i].draggable(false);
+                    }
+                }
+            });
+        } else {
+            component.on("mousedown", function() {
+                if(isDrawLine === false) {
+                    var cloneComponet = this.clone({
+                        draggable:true,
+                        id: cloneComponentId(this.getAttr("name"))
+                    });
+                    console.log("clone "+cloneComponet.id()+".");
+                    cloneComponet.off("mousedown");
+                    layer.add(cloneComponet);
+                    layer.draw();
+                    cloneComponets.push(cloneComponet);
+                    updateNodes(cloneComponet);
+                }
+            });
+        }
+    }
+    stage.add(layer);
+    var canvas = document.getElementsByTagName("canvas")[0];
+    layer.on("mousedown", function(e) {
+        if(isDrawLine) {
+            lastX = e.pageX - parseInt(canvas.style.left.replace('px', ''));
+            lastY = e.pageY - parseInt(canvas.style.left.replace('px', ''));
+            nodeDown = e.targetNode;
+            console.log("x:"+lastX+", y:"+lastY);
+        }
+    });
+    layer.on("mouseup", function(e) {
+        if(isDrawLine) {
+            var curX = e.pageX - parseInt(canvas.style.left.replace('px', ''));
+            var curY = e.pageY - parseInt(canvas.style.left.replace('px', ''));
+            nodeUp = e.targetNode;
+            console.log("curX:"+curX+", curY:"+curY);
+            var line = new Kinetic.Line({
+                points: [lastX, lastY, curX, curY],
+                strokeWidth: "2",
+                lineType: lineType
+            });
+            if(lineType === "WifiLink") {
+                line.setAttr("stroke", "black");
+                line.setAttr("dash", [10, 5]);
+            } else if (lineType === "WiredLink") {
+                line.setAttr("stroke", "blue");
+            } else if(lineType === "P2pLink") {
+                line.setAttr("stroke", "lightgreen");
+            }
+            if(cloneComponets.indexOf(nodeDown) >= 0 && cloneComponets.indexOf(nodeUp)>=0 &&
+                    nodeDown.id() !== nodeUp.id()) {
+                line.setAttr("src", nodeDown.id());
+                line.setAttr("dst", nodeUp.id());
+                lines.push(line);
+                layer.add(line);
+                layer.draw();
+            }
+        }
+    });
+    var xmlNode = function (doc, name, value) {
+        var element = doc.createElement(name);
+        var text = doc.createTextNode(value);
+        element.appendChild(text);
+        return element;
+    };
+    var cloneComponentId = function(name) {
+        var count = 0;
+        var prefix = NAMEPREFIX[TYPES.indexOf(name)];
+        for(var i=0;i<cloneComponets.length;i++) {
+            if(cloneComponets[i].getAttr("name") === name) {
+                count++;
+            }
+        }
+        return prefix+count;
+    };
+    var getConnectionNodes = function(id) {
+        var connections = [];
+        for(var i=0;i<lines.length;i++) {
+            var src = lines[i].getAttr("src");
+            var dst = lines[i].getAttr("dst");
+            if(src === id && connections.indexOf(dst) < 0) {
+                connections.push(dst);
+            }
+            if(dst === id && connections.indexOf(src) < 0) {
+                connections.push(src);
+            }
+        }
+        return connections;
+    };
+    var getAppName = function(type) {
+        var count = 0;
+        for(var i=0;i<applications.length;i++) {
+            if(applications[i]["type"] === APPTYPES[type]) {
+                count++;
+            }
+        }
+        return APPPREFIX[type]+count;
+    };
+    $("input[name=export_xml]").click(function() {
+        var doc = document.implementation.createDocument(null, "Gen", null);
+        var nodes = doc.createElement("Nodes");
+        for(var i=0;i<cloneComponets.length;i++) {
+            var node = doc.createElement("node");
+            node.appendChild(xmlNode(doc, "type", cloneComponets[i].getAttr("name")));
+            node.appendChild(xmlNode(doc, "nodeNbr", "1"));
+            node.appendChild(xmlNode(doc, "nsc", ""));
+            node.appendChild(xmlNode(doc, "name", cloneComponets[i].id()));
+            node.appendChild(xmlNode(doc, "x", cloneComponets[i].position().x));
+            node.appendChild(xmlNode(doc, "y", cloneComponets[i].position().y));
+            nodes.appendChild(node);
+        }
+        doc.documentElement.appendChild(nodes);
+        var lineNodes = doc.createElement("Lines");
+
+        var hardwareNodes = doc.createElement("NetworkHardwares");
+        var p2pCount = 0;
+        for(var i=0;i<lines.length;i++) {
+            var lineNode = doc.createElement("line");
+            lineNode.appendChild(xmlNode(doc, "first", lines[i].getAttr("src")));
+            lineNode.appendChild(xmlNode(doc, "second", lines[i].getAttr("dst")));
+            lineNode.appendChild(xmlNode(doc, "linkType", lines[i].getAttr("lineType")));
+            lineNodes.appendChild(lineNode);
+            if(lines[i].getAttr("lineType") === "P2pLink") {
+                var hardwareNode = doc.createElement("networkHardware");
+                hardwareNode.appendChild(xmlNode(doc, "hidden", "false"));
+                hardwareNode.appendChild(xmlNode(doc, "type", HARDWARETYPES[4]));
+                hardwareNode.appendChild(xmlNode(doc, "name", HARDWAREPREFIX[4]+p2pCount));
+                hardwareNode.appendChild(xmlNode(doc, "dataRate", "10000000"));
+                hardwareNode.appendChild(xmlNode(doc, "linkDelay", "10000"));
+                hardwareNode.appendChild(xmlNode(doc, "enableTrace", "false"));
+                hardwareNode.appendChild(xmlNode(doc, "tracePromisc", "false"));
+                var connectionNodes = doc.createElement("connectedNodes");
+                hardwareNode.appendChild(connectionNodes);
+                connectionNodes.appendChild(xmlNode(doc, "name", lines[i].getAttr("src")));
+                connectionNodes.appendChild(xmlNode(doc, "name", lines[i].getAttr("dst")));
+                hardwareNodes.appendChild(hardwareNode);
+                p2pCount++;
+            }
+        }
+
+
+
+        for(var i=0;i<cloneComponets.length;i++) {
+            var hardwareNode = doc.createElement("networkHardware");
+            var hardwareCount = [0, 0, 0, 0, 0];
+            var hType = cloneComponets[i].getAttr("name");
+            var index = HARDWARETYPES.indexOf(hType);
+            if( index >= 0) {
+                hardwareNode.appendChild(xmlNode(doc, "name", HARDWAREPREFIX.indexOf(index)+hardwareCount[index]));
+                hardwareNode.appendChild(xmlNode(doc, "hidden", "false"));
+                hardwareNode.appendChild(xmlNode(doc, "type", hType));
+                hardwareNode.appendChild(xmlNode(doc, "dataRate", "10000000"));
+                hardwareNode.appendChild(xmlNode(doc, "linkDelay", "10000"));
+                hardwareNode.appendChild(xmlNode(doc, "enableTrace", "false"));
+                hardwareNode.appendChild(xmlNode(doc, "tracePromisc", "false"));
+                hardwareNode.appendChild(xmlNode(doc, "mobility", "false"));
+                var connectionNodes = doc.createElement("connectedNodes");
+                var connections = getConnectionNodes(cloneComponets[i].id());
+                for(var j=0;j<connections.length;j++) {
+                    connectionNodes.appendChild(xmlNode(doc, "name", connections[j]));
+                }
+                hardwareNode.appendChild(connectionNodes);
+                hardwareNodes.appendChild(hardwareNode);
+
+                hardwareCount[index]++;
+            }
+        }
+        doc.documentElement.appendChild(hardwareNodes);
+
+        var appNodes = doc.createElement("Applications");
+        for(var i=0;i<applications.length;i++) {
+            var appNode = doc.createElement("application");
+            appNode.appendChild(xmlNode(doc, "type", applications[i]["type"]));
+            appNode.appendChild(xmlNode(doc, "name", applications[i]["name"]));
+            appNode.appendChild(xmlNode(doc, "sender", applications[i]["sender"]));
+            appNode.appendChild(xmlNode(doc, "receiver", applications[i]["receiver"]));
+            appNode.appendChild(xmlNode(doc, "startTime", applications[i]["start_time"]));
+            appNode.appendChild(xmlNode(doc, "endTime", applications[i]["end_time"]));
+            var special = doc.createElement("special");
+            special.appendChild(xmlNode(doc, "port", applications[i]["port"]));
+            special.appendChild(xmlNode(doc, "packetSize", "1024"));
+            special.appendChild(xmlNode(doc, "maxPacketCount", "1"));
+            special.appendChild(xmlNode(doc, "packetIntervalTime", "1.0"));
+            appNode.appendChild(special);
+            appNodes.appendChild(appNode);
+        }
+        doc.documentElement.appendChild(appNodes);
+
+        doc.documentElement.appendChild(lineNodes);
+
+        $("textarea").val(doc.documentElement.outerHTML);
+    });
+    $("input[name=add_app]").click(function() {
+        var type = parseInt($("select[name=app_type]").val());
+        var sender = $("select[name=sender]").val();
+        var receiver = $("select[name=receiver]").val();
+        var start_time = $("input[name=start_time]").val();
+        var end_time = $("input[name=end_time]").val();
+        var port = $("input[name=port]").val();
+        var app = {
+            name: getAppName(type),
+            type: APPTYPES[type],
+            sender: sender,
+            receiver: receiver,
+            start_time: start_time,
+            end_time: end_time,
+            port: port
+        };
+        applications.push(app);
+        var text = "<p>应用名称: "+app["name"]+"，类型: "+type+"，发送节点: "+sender
+                +"，接收节点: "+receiver+"，开始时间: "+start_time+"s，结束时间: "+
+                end_time+"s，端口号: "+port+"。</p>";
+        $("#app_list").append(text);
+    });
+    var updateNodes = function(cloneComponent) {
+        var senderNode = $("select[name=sender]");
+        var receiverNode = $("select[name=receiver]");
+        var option = "<option value='" + cloneComponent.id() +"'>" + cloneComponent.id() + "</option>";
+        senderNode.append(option);
+        receiverNode.append(option);
+    }
+}
+</script>
+</body>
+</html>
